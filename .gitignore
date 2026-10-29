@@ -1,0 +1,29 @@
+# Local runtimes and generated state
+.venv/
+.local-dev/
+.playwright-cli/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases and runtime files
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
