@@ -1,0 +1,16 @@
+.git/
+.local-dev/
+.playwright-cli/
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+

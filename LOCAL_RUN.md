@@ -40,6 +40,43 @@ Open `http://127.0.0.1:8792`; verify `/healthz` and `/login` each return `200`.
 
 Last verified: 2026-10-26, Windows local development environment.
 
+## Docker local smoke run
+
+Prerequisites: Docker Desktop with the WSL 2 engine running. The Dockerfile is
+built from the project root so its `COPY` paths match the release build.
+
+From the project root in PowerShell:
+
+```powershell
+$dockerBin = "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin"
+$env:Path = "$dockerBin;$env:Path"
+$docker = "$dockerBin\docker.exe"
+New-Item -ItemType Directory -Force .local-dev\docker\raw | Out-Null
+$ownerHash = (& .venv\Scripts\python.exe -c "import sys; sys.path.insert(0, 'deploy/healthos/scripts'); import healthos; print(healthos.hash_password('local-healthos-owner'))").Trim()
+& $docker rm -f healthos-local 2>$null | Out-Null
+& $docker build --file deploy\healthos\Dockerfile --tag healthos:local .
+& $docker run --detach --name healthos-local --publish 8791:8791 `
+  --env "HEALTHOS_API_TOKEN=local-container-$([guid]::NewGuid().ToString('N'))" `
+  --env "HEALTHOS_OWNER_PASSWORD_HASH=$ownerHash" `
+  --volume "${PWD}\.local-dev\docker:/data" `
+  healthos:local serve --db /data/healthos.sqlite3 --raw-dir /data/raw --host 0.0.0.0 --port 8791
+```
+
+Verify from another PowerShell window:
+
+```powershell
+(Invoke-WebRequest http://127.0.0.1:8791/healthz).StatusCode
+(Invoke-WebRequest http://127.0.0.1:8791/login).StatusCode
+& $docker logs healthos-local
+```
+
+Expected status: `200` for both requests. Stop the smoke container with
+`& $docker rm -f healthos-local`. The database and raw files remain under
+`.local-dev\docker\`, which is ignored by Git and excluded from Docker build
+contexts.
+
+Last verified: 2026-10-29, Docker Desktop 4.97.0 / Engine 29.9.2.
+
 ## Ironbook Read-Only Integration Preview
 
 This separate instance exercises the HealthOS Ironbook history, analytics,
