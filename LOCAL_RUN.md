@@ -75,7 +75,12 @@ Expected status: `200` for both requests. Stop the smoke container with
 `.local-dev\docker\`, which is ignored by Git and excluded from Docker build
 contexts.
 
-Last verified: 2026-10-29, Docker Desktop 4.97.0 / Engine 29.9.2.
+Troubleshooting: if Docker CLI is not on `PATH`, use
+`$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin` for both `docker.exe`
+and `docker-credential-desktop.exe` before building. Docker Desktop must be
+running with the WSL 2 engine enabled.
+
+Last verified: 2026-11-02, Windows local environment, Docker Desktop 4.97.0 / Engine 29.9.2.
 
 ## Ironbook Read-Only Integration Preview
 
