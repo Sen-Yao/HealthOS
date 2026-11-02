@@ -5,11 +5,16 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const csrf = $('meta[name="healthos-csrf"]')?.content || '';
   const draftKey = 'healthos.training.draft.v1';
+  const lifecycleKey = 'healthos.training.lifecycle.v1';
+  const pageInstanceId = typeof crypto?.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const pageSize = 50;
   const state = {
     exercises: [], sessions: [], aliases: [], catalog: [], analytics: null,
     offset: 0, total: 0, query: '', selectedSession: null, editingId: null,
     metric: 'e1rm', timerStartedAt: null, timerEndedAt: null, elapsedBase: 0,
+    draftSavedAt: null, draftWriteError: null, draftDirty: false,
   };
   let timerHandle = null;
   let searchHandle = null;
@@ -155,7 +160,17 @@
   }
 
   function updateDraft() {
-    $('#draftStatus').textContent = state.editingId ? `编辑训练 #${state.editingId}` : '本地草稿自动保存';
+    if (state.editingId) {
+      $('#draftStatus').textContent = `编辑训练 #${state.editingId}`;
+    } else if (state.draftWriteError) {
+      $('#draftStatus').textContent = '本地草稿保存失败，请检查 Safari 网站存储';
+    } else if (state.draftSavedAt) {
+      const savedAt = new Date(state.draftSavedAt);
+      const time = Number.isNaN(savedAt.getTime()) ? '' : savedAt.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+      $('#draftStatus').textContent = time ? `本地草稿已保存 ${time}` : '本地草稿已保存';
+    } else {
+      $('#draftStatus').textContent = '本地草稿自动保存';
+    }
   }
 
   function draftSnapshot() {
@@ -168,13 +183,37 @@
     };
   }
 
-  let draftSaveHandle = null;
+  function recordLifecycle(eventName) {
+    try {
+      const navigation = performance.getEntriesByType('navigation')[0];
+      const events = JSON.parse(localStorage.getItem(lifecycleKey) || '[]');
+      events.push({
+        at: new Date().toISOString(), event: eventName, page_instance_id: pageInstanceId,
+        visibility: document.visibilityState, navigation_type: navigation?.type || 'unknown',
+      });
+      localStorage.setItem(lifecycleKey, JSON.stringify(events.slice(-40)));
+    } catch (_) { /* Diagnostics must never block training entry. */ }
+  }
+
+  function writeDraft(reason = 'change') {
+    try {
+      const savedAt = new Date().toISOString();
+      localStorage.setItem(draftKey, JSON.stringify({
+        ...draftSnapshot(), schema_version: 1, saved_at: savedAt,
+        save_reason: reason, page_instance_id: pageInstanceId,
+      }));
+      state.draftSavedAt = savedAt;
+      state.draftWriteError = null;
+    } catch (error) {
+      state.draftWriteError = error;
+    }
+    updateDraft();
+  }
+
   function scheduleDraftSave() {
-    clearTimeout(draftSaveHandle);
-    draftSaveHandle = setTimeout(() => {
-      try { localStorage.setItem(draftKey, JSON.stringify(draftSnapshot())); } catch (_) { /* Browser storage may be unavailable. */ }
-      updateDraft();
-    }, 250);
+    state.draftDirty = true;
+    // Keep this synchronous: iOS may suspend the page before a delayed callback runs.
+    writeDraft('change');
   }
 
   function restoreDraft() {
@@ -189,6 +228,8 @@
       state.timerStartedAt = value.timer_started_at || null;
       state.timerEndedAt = value.timer_ended_at || null;
       state.elapsedBase = Number(value.elapsed_base) || 0;
+      state.draftSavedAt = value.saved_at || null;
+      state.draftDirty = true;
       return true;
     } catch (_) { return false; }
   }
@@ -249,6 +290,9 @@
     try {
       const result = await request('/training', {method: 'POST', body: trainingFormData()});
       localStorage.removeItem(draftKey);
+      state.draftSavedAt = null;
+      state.draftWriteError = null;
+      state.draftDirty = false;
       state.editingId = null;
       state.timerStartedAt = null;
       state.timerEndedAt = null;
@@ -558,6 +602,16 @@
     });
     $('#e1rmExercise').onchange = drawChart;
     window.addEventListener('resize', drawChart);
+    recordLifecycle('load');
+    document.addEventListener('visibilitychange', () => {
+      recordLifecycle(`visibility:${document.visibilityState}`);
+      if (document.visibilityState === 'hidden' && state.draftDirty) writeDraft('visibility-hidden');
+    });
+    window.addEventListener('pagehide', () => {
+      recordLifecycle('pagehide');
+      if (state.draftDirty) writeDraft('pagehide');
+    });
+    window.addEventListener('pageshow', event => recordLifecycle(event.persisted ? 'pageshow-bfcache' : 'pageshow'));
     const restored = restoreDraft();
     if (!state.exercises.length) state.exercises = [];
     renderExercises();
