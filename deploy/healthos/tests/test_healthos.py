@@ -1690,7 +1690,10 @@ class CanonicalStoreTests(unittest.TestCase):
                 response = connection.getresponse()
                 self.assertEqual(response.status, 200)
                 self.assertIn("default-src 'none'", response.getheader("Content-Security-Policy"))
-                response.read()
+                login_page = response.read().decode("utf-8")
+                self.assertEqual(login_page.count("<form"), 1)
+                self.assertIn("id='owner-password'", login_page)
+                self.assertIn("autocomplete='current-password'", login_page)
 
                 connection.request("GET", "/training-legacy")
                 response = connection.getresponse()
@@ -1870,11 +1873,17 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn('name="healthos-csrf"', page)
                 self.assertIn('src="/training-ui.js"', page)
                 self.assertIn('id="exerciseHints"', page)
+                self.assertIn('id="discardBtn"', page)
+                self.assertIn('id="idleOverlay"', page)
                 self.assertNotIn("sessions.unshift", page)
                 script_request = urllib.request.Request(base + "/training-ui.js", headers=cookie)
                 with urllib.request.urlopen(script_request, timeout=2) as response:
                     self.assertIn("text/javascript", response.headers.get("Content-Type", ""))
-                    self.assertIn("owner/api/training/sessions", response.read().decode("utf-8"))
+                    script = response.read().decode("utf-8")
+                    self.assertIn("owner/api/training/sessions", script)
+                    self.assertIn("new URLSearchParams()", script)
+                    self.assertIn("idleReminderSeconds", script)
+                    self.assertIn("csrf_invalid", script)
 
                 def api(path, fields=None, method=None):
                     headers = {**cookie, "Accept": "application/json"}

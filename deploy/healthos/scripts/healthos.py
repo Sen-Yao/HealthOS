@@ -3942,10 +3942,12 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                 content = "<div class='panel'><p class='error'>尚未配置管理员身份验证。</p><p>请配置 HEALTHOS_OWNER_PASSWORD_HASH 后重新启动服务。</p></div>"
                 self.send_html(503, self.page("管理员登录", content))
                 return
-            content = """<div class='panel'><form method='post' action='/login'>
-            <p class='eyebrow'>个人健康档案</p><div class='panel'><p class='muted'>登录以查看和管理你的健康数据。</p><form method='post' action='/login'>
-            <label>管理员密码<input type='password' name='password' required autofocus autocomplete='current-password'></label>
-            <button>登录 HealthOS</button></form></div>"""
+            content = """<div class='panel'><p class='eyebrow'>个人健康档案</p>
+            <p class='muted'>登录以查看和管理你的健康数据。</p>
+            <form method='post' action='/login' autocomplete='on'>
+            <label for='owner-password'>管理员密码</label>
+            <input id='owner-password' type='password' name='password' required autofocus autocomplete='current-password'>
+            <button type='submit'>登录 HealthOS</button></form></div>"""
             self.send_html(200, self.page("管理员登录", content))
             return
         if parsed.path.startswith("/share/"):

@@ -10,13 +10,16 @@
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const pageSize = 50;
+  const idleReminderSeconds = 10 * 60;
   const state = {
     exercises: [], sessions: [], aliases: [], catalog: [], analytics: null,
     offset: 0, total: 0, query: '', selectedSession: null, editingId: null,
     metric: 'e1rm', timerStartedAt: null, timerEndedAt: null, elapsedBase: 0,
+    lastActivityAt: null, idleReminderShown: false,
     draftSavedAt: null, draftWriteError: null, draftDirty: false,
   };
   let timerHandle = null;
+  let idleCheckHandle = null;
   let searchHandle = null;
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -180,6 +183,7 @@
       feeling: $('#feeling').value, duration_minutes: $('#duration').value,
       exercises: state.exercises, timer_started_at: state.timerStartedAt,
       timer_ended_at: state.timerEndedAt, elapsed_base: state.elapsedBase,
+      last_activity_at: state.lastActivityAt,
     };
   }
 
@@ -212,6 +216,8 @@
 
   function scheduleDraftSave() {
     state.draftDirty = true;
+    state.lastActivityAt = new Date().toISOString();
+    state.idleReminderShown = false;
     // Keep this synchronous: iOS may suspend the page before a delayed callback runs.
     writeDraft('change');
   }
@@ -228,6 +234,7 @@
       state.timerStartedAt = value.timer_started_at || null;
       state.timerEndedAt = value.timer_ended_at || null;
       state.elapsedBase = Number(value.elapsed_base) || 0;
+      state.lastActivityAt = value.last_activity_at || value.saved_at || value.timer_started_at || null;
       state.draftSavedAt = value.saved_at || null;
       state.draftDirty = true;
       return true;
@@ -267,7 +274,7 @@
   }
 
   function trainingFormData() {
-    const form = new FormData();
+    const form = new URLSearchParams();
     form.set('csrf', csrf);
     form.set('request_id', crypto.randomUUID().replaceAll('-', ''));
     if (state.editingId) form.set('session_id', String(state.editingId));
@@ -282,6 +289,36 @@
       ended_at: state.timerEndedAt || (timerHandle ? null : now.toISOString()),
     } : {}));
     return form;
+  }
+
+  function resetCurrentTraining() {
+    stopTimer();
+    localStorage.removeItem(draftKey);
+    state.exercises = [];
+    state.editingId = null;
+    state.timerStartedAt = null;
+    state.timerEndedAt = null;
+    state.elapsedBase = 0;
+    state.lastActivityAt = null;
+    state.idleReminderShown = false;
+    state.draftSavedAt = null;
+    state.draftWriteError = null;
+    state.draftDirty = false;
+    $('#activeBar').hidden = true;
+    $('#startBtn').hidden = false;
+    $('#sessionDate').value = new Date().toISOString().slice(0, 10);
+    $('#bodyPart').selectedIndex = 0;
+    $('#duration').value = '';
+    $('#feeling').value = '';
+    $('#finishOverlay').classList.remove('open');
+    $('#idleOverlay').classList.remove('open');
+    renderExercises();
+    toast('本次未保存训练已丢弃');
+  }
+
+  function discardCurrentTraining() {
+    if (!confirm('丢弃本次未保存训练及计时？此操作无法撤销。')) return;
+    resetCurrentTraining();
   }
 
   async function saveTraining() {
@@ -378,7 +415,7 @@
 
   async function deleteSession(id) {
     if (!confirm('删除这节训练及其所有动作记录？此操作无法撤销。')) return;
-    const form = new FormData();
+    const form = new URLSearchParams();
     form.set('csrf', csrf);
     form.set('session_id', String(id));
     try {
@@ -522,15 +559,30 @@
     $('#timer').textContent = `${padTime(Math.floor(elapsed / 60))}:${padTime(elapsed % 60)}`;
     if (state.timerStartedAt) $('#duration').value = String(Math.round(elapsed / 60));
   }
-  function stopTimer() { clearInterval(timerHandle); timerHandle = null; }
+  function stopTimer() {
+    clearInterval(timerHandle); timerHandle = null;
+    clearInterval(idleCheckHandle); idleCheckHandle = null;
+  }
+  function checkIdleTraining() {
+    if (!state.timerStartedAt || state.timerEndedAt || state.idleReminderShown || !state.lastActivityAt) return;
+    const idleSeconds = Math.floor((Date.now() - Date.parse(state.lastActivityAt)) / 1000);
+    if (idleSeconds < idleReminderSeconds) return;
+    state.idleReminderShown = true;
+    writeDraft('idle-reminder');
+    $('#idleOverlay').classList.add('open');
+  }
   function startTimer() {
     if (!state.timerStartedAt) state.timerStartedAt = new Date().toISOString();
     state.timerEndedAt = null;
+    state.idleReminderShown = false;
     $('#activePart').textContent = $('#bodyPart').value;
     $('#activeLabel').textContent = '进行中';
     $('#endBtn').textContent = '结束运动';
     $('#activeBar').hidden = false; $('#startBtn').hidden = true;
-    stopTimer(); timerHandle = setInterval(renderTimer, 1000); renderTimer(); scheduleDraftSave();
+    stopTimer();
+    timerHandle = setInterval(renderTimer, 1000);
+    idleCheckHandle = setInterval(checkIdleTraining, 15000);
+    renderTimer(); scheduleDraftSave();
   }
   function finishTimer() {
     state.elapsedBase += state.timerStartedAt && !state.timerEndedAt ? Math.floor((Date.now() - Date.parse(state.timerStartedAt)) / 1000) : 0;
@@ -539,7 +591,8 @@
   }
 
   function showError(error) {
-    if (error.status === 401 || error.status === 403) { location.href = '/login'; return; }
+    if (error.status === 401) { location.href = '/login'; return; }
+    if (error.status === 403 && error.message === 'csrf_invalid') { toast('页面验证已失效，请刷新后重试'); return; }
     toast(error.message || 'HealthOS 数据暂不可用');
   }
 
@@ -576,7 +629,8 @@
       set.segments.push({weight: '', reps: ''}); renderExercises(); scheduleDraftSave();
     });
     $('#addExerciseBtn').onclick = () => { state.exercises.push(newExercise()); renderExercises(); $('.exercise-name', $('#exerciseList').lastElementChild)?.focus(); scheduleDraftSave(); };
-    $('#clearBtn').onclick = () => { if (!confirm('清空当前未保存训练草稿？')) return; state.exercises = []; renderExercises(); scheduleDraftSave(); };
+    $('#clearBtn').onclick = () => { if (!confirm('清空当前未保存训练的动作数据？')) return; state.exercises = []; renderExercises(); scheduleDraftSave(); };
+    $('#discardBtn').onclick = discardCurrentTraining;
     $('#saveBtn').onclick = saveTraining;
     $('#startBtn').onclick = () => startTimer();
     $('#endBtn').onclick = () => {
@@ -586,13 +640,16 @@
     $('#continueBtn').onclick = () => { $('#finishOverlay').classList.remove('open'); startTimer(); };
     $('#finishLater').onclick = () => { $('#finishOverlay').classList.remove('open'); $('#activeLabel').textContent = '已结束 · 可稍后保存'; $('#endBtn').textContent = '继续计时'; scheduleDraftSave(); };
     $('#finishSave').onclick = saveTraining;
+    $('#idleContinue').onclick = () => { $('#idleOverlay').classList.remove('open'); scheduleDraftSave(); };
+    $('#idleFinish').onclick = () => { $('#idleOverlay').classList.remove('open'); finishTimer(); scheduleDraftSave(); };
+    $('#idleDiscard').onclick = discardCurrentTraining;
     $('#historyPrevious').onclick = async () => { state.offset = Math.max(0, state.offset - pageSize); await loadSessions(); };
     $('#historyNext').onclick = async () => { if (state.offset + pageSize < state.total) { state.offset += pageSize; await loadSessions(); } };
     $('#historySearch').oninput = () => { clearTimeout(searchHandle); searchHandle = setTimeout(() => { state.query = $('#historySearch').value.trim(); state.offset = 0; loadSessions().catch(showError); }, 220); };
     $('#suggestBtn').onclick = () => showSuggestions().catch(showError);
     $('#aliasQuery').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); showSuggestions().catch(showError); } };
     $('#aliasForm').onsubmit = async event => {
-      event.preventDefault(); const form = new FormData(event.currentTarget); form.set('csrf', csrf);
+      event.preventDefault(); const form = new URLSearchParams(new FormData(event.currentTarget)); form.set('csrf', csrf);
       try { await request('/training/aliases', {method: 'POST', body: form}); event.currentTarget.reset(); await loadAliases(); toast('动作别名已保存'); }
       catch (error) { showError(error); }
     };
@@ -606,19 +663,27 @@
     document.addEventListener('visibilitychange', () => {
       recordLifecycle(`visibility:${document.visibilityState}`);
       if (document.visibilityState === 'hidden' && state.draftDirty) writeDraft('visibility-hidden');
+      if (document.visibilityState === 'visible') checkIdleTraining();
     });
     window.addEventListener('pagehide', () => {
       recordLifecycle('pagehide');
       if (state.draftDirty) writeDraft('pagehide');
     });
-    window.addEventListener('pageshow', event => recordLifecycle(event.persisted ? 'pageshow-bfcache' : 'pageshow'));
+    window.addEventListener('pageshow', event => {
+      recordLifecycle(event.persisted ? 'pageshow-bfcache' : 'pageshow');
+      checkIdleTraining();
+    });
     const restored = restoreDraft();
     if (!state.exercises.length) state.exercises = [];
     renderExercises();
     if (state.timerStartedAt) {
       $('#activeBar').hidden = false; $('#startBtn').hidden = true;
       if (state.timerEndedAt) { state.elapsedBase = Math.max(state.elapsedBase, Math.floor((Date.parse(state.timerEndedAt) - Date.parse(state.timerStartedAt)) / 1000)); $('#activeLabel').textContent = '已结束 · 可稍后保存'; $('#endBtn').textContent = '继续计时'; }
-      else { $('#activeLabel').textContent = '已恢复计时'; timerHandle = setInterval(renderTimer, 1000); }
+      else {
+        $('#activeLabel').textContent = '已恢复计时';
+        timerHandle = setInterval(renderTimer, 1000);
+        idleCheckHandle = setInterval(checkIdleTraining, 15000);
+      }
       renderTimer();
     }
     try {

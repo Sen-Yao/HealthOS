@@ -50,7 +50,7 @@
         </aside>
         <section class="panel-box set-board"><div class="block-title"><h2>动作组</h2><span class="sub" id="recordCount">2 个动作</span></div>
           <datalist id="exerciseHints"></datalist><div class="exercise-list" id="exerciseList"></div>
-          <div class="board-actions"><button class="outline" id="addExerciseBtn">加动作</button><button class="outline" id="clearBtn">清空本次</button><button class="commit" id="saveBtn">保存训练</button></div>
+          <div class="board-actions"><button class="outline" id="addExerciseBtn">加动作</button><button class="outline" id="clearBtn">清空动作</button><button class="danger outline" id="discardBtn">丢弃本次</button><button class="commit" id="saveBtn">保存训练</button></div>
           <label class="duration-line"><span>训练时长（分钟）</span><input type="number" min="0" step="1" id="duration" value="58" placeholder="自动计时"></label>
           <div class="draft-row"><span id="draftStatus">演示草稿 · 未保存</span><span><strong id="totalVolume">总训练量 0 kg</strong></span></div>
         </section>
@@ -74,6 +74,7 @@
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="overlay" id="finishOverlay" role="dialog" aria-modal="true" aria-labelledby="finishTitle"><div class="dialog"><p class="eyebrow">FINISH</p><h2 id="finishTitle">结束本次训练</h2><p>计时会暂停。你可以先保存训练，也可以之后再回来完成。</p><div class="dialog-actions"><button class="commit" id="finishSave">结束并保存</button><button class="outline" id="finishLater">结束，稍后保存</button><button class="quiet-btn" id="continueBtn">继续训练</button></div></div></div>
+  <div class="overlay" id="idleOverlay" role="dialog" aria-modal="true" aria-labelledby="idleTitle"><div class="dialog"><p class="eyebrow">IDLE CHECK</p><h2 id="idleTitle">还在训练吗？</h2><p>已经有 10 分钟没有填写新的训练数据。计时仍在继续，请选择下一步。</p><div class="dialog-actions"><button class="commit" id="idleContinue">继续训练</button><button class="outline" id="idleFinish">结束，稍后保存</button><button class="quiet-btn" id="idleDiscard">丢弃本次</button></div></div></div>
   <script src="/training-ui.js" defer></script>
 </body>
 </html>
