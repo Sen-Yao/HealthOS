@@ -18,7 +18,7 @@ JSON endpoints and the existing transactional save, edit, delete, alias, and
 validation paths. History search and pagination, action suggestions, previous
 session references, analytics, and e1RM charts use stored HealthOS data. The
 former server-rendered form remains available at `/training-legacy` for
-compatibility; `/training-demo` redirects to the production console.
+compatibility.
 Its analysis view summarizes 12
 weeks of session frequency, volume, and effective sets, 90-day body-part counts,
 and per-session exercise weight and volume trends. HealthOS currently counts an
@@ -181,7 +181,7 @@ history and analytics but hides and rejects remote training writes.
 
 ## Key routes
 
-- `/login`, `/`, `/data`, `/add`, `/training`, `/training-demo`, `/training/migration-preflight`, `/shares`: Owner Console
+- `/login`, `/`, `/data`, `/add`, `/training`, `/training/migration-preflight`, `/shares`: Owner Console
 - `/api/v1/health/context`: authenticated `HealthContext` projection
 - `/api/v1/training/migration-preflight`: authenticated, read-only Ironbook mapping report
 - `/share/<opaque-token>`: anonymous immutable snapshot access

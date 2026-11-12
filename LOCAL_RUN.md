@@ -38,7 +38,7 @@ Remove-Item Env:HEALTHOS_IRONBOOK_BASE_URL -ErrorAction SilentlyContinue
 
 Open `http://127.0.0.1:8792`; verify `/healthz` and `/login` each return `200`.
 
-Last verified: 2026-10-26, Windows local development environment.
+Last verified: 2026-11-12, Windows local development environment.
 
 ## Isolated Browser Use workaround (2026-11-09)
 
@@ -95,7 +95,7 @@ Troubleshooting: if Docker CLI is not on `PATH`, use
 and `docker-credential-desktop.exe` before building. Docker Desktop must be
 running with the WSL 2 engine enabled.
 
-Last verified: 2026-11-02, Windows local environment, Docker Desktop 4.97.0 / Engine 29.9.2.
+Last verified: 2026-11-12 for the local Python service. Docker smoke build was not rerun because the Docker Desktop Linux engine was unavailable.
 
 ## Ironbook Read-Only Integration Preview
 

@@ -1132,15 +1132,6 @@ def query_health_events(
 
 
 _TRAINING_BODY_PARTS = {"胸", "背", "肩", "手臂", "腿", "其他"}
-_TRAINING_BODY_PART_CYCLE = ("胸", "背", "肩", "手臂", "腿")
-
-
-def next_training_body_part(last_body_part: object) -> str:
-    try:
-        index = _TRAINING_BODY_PART_CYCLE.index(str(last_body_part or "").strip())
-    except ValueError:
-        return _TRAINING_BODY_PART_CYCLE[0]
-    return _TRAINING_BODY_PART_CYCLE[(index + 1) % len(_TRAINING_BODY_PART_CYCLE)]
 
 
 def _training_json(value: object, default: object) -> str:
@@ -3444,9 +3435,6 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
     def render_owner_get(self, parsed: urllib.parse.ParseResult, session: dict[str, object]) -> None:
         conn = init_db(self.server.db_path)  # type: ignore[attr-defined]
         try:
-            if parsed.path == "/training-demo":
-                self.redirect("/training")
-                return
             if parsed.path == "/training":
                 demo_path = Path(__file__).with_name("training.html")
                 try:
@@ -3656,26 +3644,6 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                 form_session = (ironbook_selected if ironbook_mode and edit_mode else selected if edit_mode else None)
                 form_date = html.escape(str(form_session["session_date"] if form_session else dt.date.today().isoformat()), quote=True)
                 form_body_part = str(form_session["body_part"] if form_session else "胸")
-                if not form_session:
-                    if ironbook_entry_mode and configured_ironbook_url:
-                        try:
-                            timeout = float(getattr(self.server, "ironbook_timeout_seconds", 8.0))  # type: ignore[attr-defined]
-                            suggestion = request_ironbook_json(
-                                configured_ironbook_url, "/api/training/next-body-part", timeout
-                            ).get("suggested_body_part")
-                            if isinstance(suggestion, str) and suggestion in _TRAINING_BODY_PARTS:
-                                form_body_part = suggestion
-                        except (ValueError, RuntimeError):
-                            pass
-                    else:
-                        cycle_marks = ",".join("?" for _ in _TRAINING_BODY_PART_CYCLE)
-                        latest = conn.execute(
-                            f"""SELECT body_part FROM training_sessions
-                                WHERE body_part IN ({cycle_marks})
-                                ORDER BY session_date DESC,id DESC LIMIT 1""",
-                            _TRAINING_BODY_PART_CYCLE,
-                        ).fetchone()
-                        form_body_part = next_training_body_part(latest["body_part"] if latest else None)
                 body_part_options = "".join(
                     f"<option{' selected' if option == form_body_part else ''}>{option}</option>"
                     for option in ("胸", "背", "肩", "手臂", "腿", "其他")
@@ -3703,10 +3671,10 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                     form_date_controls = f"<label>训练日期<input name='session_date' type='date' value='{form_date}' required></label>"
                     form_body_part_controls = f"<label>训练部位<select name='body_part'>{body_part_options}</select></label>"
                 analytics = training_analytics(conn)
-                content = f"""<p><a class='button secondary' href='/training-demo'>预览新版训练界面（演示数据）</a></p>
+                content = f"""
                 <div {'hidden' if ironbook_mode else ''} class='grid'><div class='panel stat'><span>累计训练</span><strong>{totals['sessions']}</strong></div><div class='panel stat'><span>近 30 天训练</span><strong>{totals['recent_sessions']}</strong></div><div class='panel stat'><span>近 30 天训练量</span><strong>{round(float(totals['recent_volume'] or 0))} kg</strong></div></div>
                 <p {'hidden' if ironbook_mode else ''}><a class='button secondary' href='/training?source=ironbook'>查看 Ironbook 训练历史</a></p>
-                <div {'hidden' if (ironbook_mode and not ironbook_entry_mode) or not ironbook_form_available else ''} class='panel'><p class='eyebrow'>{'Ironbook 写回' if ironbook_entry_mode else 'HealthOS 本地记录'}</p><h2>{'编辑训练' if form_session else '记录一次训练'}</h2>
+                <div {'hidden' if (ironbook_mode and not ironbook_entry_mode) or not ironbook_form_available else ''} class='panel'><p class='eyebrow'>{'Ironbook 写回' if ironbook_entry_mode else '训练记录'}</p><h2>{'编辑训练' if form_session else '记录一次训练'}</h2>
                 {"<p class='muted'>保存会直接写入 Ironbook。Ironbook 当前要求每组填写重量、次数和 RPE；通过 HealthOS 暂不能修改已有训练的日期或部位。</p>" if ironbook_entry_mode else ""}
                 <form method='post' action='/training' id='training-form'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='request_id' value='{secrets.token_urlsafe(24)}'>{form_source}{form_session_id}<input type='hidden' name='ironbook_extra_data' value="{form_extra_data}"><input type='hidden' name='records_json' id='training-records-json' value="{form_records}"><input type='hidden' name='training_timing_json' id='training-timing-json' value="{form_timing}">
                 <div class='form-grid'>{form_date_controls}{form_body_part_controls}
@@ -4007,8 +3975,7 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                         (month_start, today, month_start, today),
                     ).fetchone()
                     analytics = training_analytics(conn)
-                    last = conn.execute("SELECT body_part FROM training_sessions ORDER BY session_date DESC,id DESC LIMIT 1").fetchone()
-                    self.send_json(200, {"summary": dict(summary), "suggested_body_part": next_training_body_part(last["body_part"] if last else None), **analytics})
+                    self.send_json(200, {"summary": dict(summary), **analytics})
                     return
                 if parsed.path == "/owner/api/training/exercises":
                     raw_query = query.get("q", [""])[0].strip()
@@ -4159,7 +4126,7 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_json(200, result)
             return
-        if parsed.path in {"/", "/data", "/training", "/training-legacy", "/training-demo", "/training-ui.js", "/training/migration-preflight", "/add", "/shares"}:
+        if parsed.path in {"/", "/data", "/training", "/training-legacy", "/training-ui.js", "/training/migration-preflight", "/add", "/shares"}:
             session = self.require_owner()
             if session is not None:
                 self.render_owner_get(parsed, session)

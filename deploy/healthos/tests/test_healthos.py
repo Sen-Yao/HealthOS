@@ -220,9 +220,7 @@ class CanonicalStoreTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM training_exercises").fetchone()[0], 2)
             conn.close()
 
-    def test_training_body_part_cycle_wraps_and_defaults_from_local_history(self):
-        self.assertEqual(healthos.next_training_body_part("腿"), "胸")
-        self.assertEqual(healthos.next_training_body_part("其他"), "胸")
+    def test_training_legacy_uses_explicit_default_body_part(self):
         with tempfile.TemporaryDirectory() as directory:
             server = healthos.http.server.ThreadingHTTPServer(
                 ("127.0.0.1", 0), healthos.HealthOSHandler
@@ -234,21 +232,13 @@ class CanonicalStoreTests(unittest.TestCase):
             thread.start()
             cookie = {"Cookie": f"healthos_session={session_id}"}
             try:
-                conn = healthos.init_db(server.db_path)
-                healthos.create_training_session(conn, {
-                    "request_id": "cycle-seed-session",
-                    "session_date": "2026-10-25",
-                    "body_part": "背",
-                    "records": [],
-                })
-                conn.close()
                 request = urllib.request.Request(
                     f"http://127.0.0.1:{server.server_port}/training-legacy?source=local&new=1",
                     headers=cookie,
                 )
                 with urllib.request.urlopen(request, timeout=3) as response:
                     page = response.read().decode("utf-8")
-                self.assertIn("<option selected>肩</option>", page)
+                self.assertIn("<option selected>胸</option>", page)
             finally:
                 healthos.destroy_session(session_id)
                 server.shutdown()
@@ -1679,7 +1669,6 @@ class CanonicalStoreTests(unittest.TestCase):
             )
             server.db_path = str(db)
             server.raw_dir = Path(directory) / "raw"
-            server.training_demo_path = Path(__file__).resolve().parents[3] / ".local-dev" / "ironbook-aligned-training-demo.html"
             old_hash = os.environ.get("HEALTHOS_OWNER_PASSWORD_HASH")
             os.environ["HEALTHOS_OWNER_PASSWORD_HASH"] = healthos.hash_password("correct horse")
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
@@ -1728,12 +1717,6 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn("training-finish", training_page)
                 self.assertIn("动作名称与别名", training_page)
                 csrf = re.search(r"name='csrf' value='([^']+)'", training_page).group(1)
-
-                connection.request("GET", "/training-demo", headers={"Cookie": cookie})
-                response = connection.getresponse()
-                demo_page = response.read().decode("utf-8")
-                self.assertEqual(response.status, 303)
-                self.assertEqual(response.getheader("Location"), "/training")
 
                 body = urllib.parse.urlencode({
                     "csrf": csrf,
@@ -1874,6 +1857,14 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn('src="/training-ui.js"', page)
                 self.assertIn('id="exerciseHints"', page)
                 self.assertIn('id="discardBtn"', page)
+                self.assertIn('id="trainingEntry"', page)
+                self.assertIn('id="activeTraining"', page)
+                self.assertIn('id="entryStartBtn"', page)
+                self.assertIn('aria-label="打开菜单"', page)
+                self.assertNotIn('nextHint', page)
+                self.assertNotIn('建议：', page)
+                self.assertNotIn('睡眠一般，推得动', page)
+                self.assertNotIn('本地记录', page)
                 self.assertIn('id="trainingDecisionOverlay"', page)
                 self.assertIn('id="decisionContinue"', page)
                 self.assertIn('id="decisionSave"', page)
@@ -1933,6 +1924,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertEqual(detail["records"][0]["extra_data"]["structure"], "drop_set_group")
                 _, analytics = api("/owner/api/training/analytics")
                 self.assertEqual(analytics["summary"]["total_sessions"], 1)
+                self.assertNotIn("suggested_body_part", analytics)
 
                 exercise_id = detail["records"][0]["exercise_id"]
                 _, alias = api("/training/aliases", {"csrf": csrf, "exercise_id": str(exercise_id), "alias_name": "测试推举"}, "POST")

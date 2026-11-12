@@ -11,6 +11,10 @@
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const pageSize = 50;
   const idleReminderSeconds = 10 * 60;
+  const localDate = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  };
   const state = {
     exercises: [], sessions: [], aliases: [], catalog: [], analytics: null,
     offset: 0, total: 0, query: '', selectedSession: null, editingId: null,
@@ -52,14 +56,32 @@
 
   function changeView(name) {
     $$('.side-nav button').forEach(button => button.classList.toggle('active', button.dataset.view === name));
-    $$('.view').forEach(view => view.classList.toggle('active', view.id === `view-${name}`));
+    $$('.view:not(#trainingEntry)').forEach(view => view.classList.toggle('active', view.id === `view-${name}`));
     $('#sidebar').classList.remove('open');
+    if (name === 'record') {
+      renderTrainingMode();
+      return;
+    }
+    $('#trainingEntry').hidden = true;
+    $('#activeTraining').hidden = true;
     if (name === 'stats') loadAnalytics().catch(showError);
     if (name === 'aliases') loadAliases().catch(showError);
   }
 
   function newSet() { return { weight: '', reps: '', rpe: '', note: '', warmup: false, drop: false, segments: [{ weight: '', reps: '' }] }; }
   function newExercise(name = '') { return { name, last: null, sets: [newSet()] }; }
+
+  function hasTrainingDraft() {
+    return Boolean(state.editingId || state.timerStartedAt || state.exercises.length);
+  }
+
+  function renderTrainingMode() {
+    const active = hasTrainingDraft();
+    $('#trainingEntry').hidden = active;
+    $('#activeTraining').hidden = !active;
+    $('#startBtn').hidden = !active || Boolean(state.timerStartedAt);
+    $('#activeBar').hidden = !state.timerStartedAt;
+  }
 
   function groupSessionRecords(records) {
     const groups = new Map();
@@ -166,13 +188,13 @@
     if (state.editingId) {
       $('#draftStatus').textContent = `编辑训练 #${state.editingId}`;
     } else if (state.draftWriteError) {
-      $('#draftStatus').textContent = '本地草稿保存失败，请检查 Safari 网站存储';
+      $('#draftStatus').textContent = '草稿保存失败';
     } else if (state.draftSavedAt) {
       const savedAt = new Date(state.draftSavedAt);
       const time = Number.isNaN(savedAt.getTime()) ? '' : savedAt.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
-      $('#draftStatus').textContent = time ? `本地草稿已保存 ${time}` : '本地草稿已保存';
+      $('#draftStatus').textContent = time ? `草稿已保存 ${time}` : '草稿已保存';
     } else {
-      $('#draftStatus').textContent = '本地草稿自动保存';
+      $('#draftStatus').textContent = '未保存';
     }
   }
 
@@ -304,14 +326,13 @@
     state.draftSavedAt = null;
     state.draftWriteError = null;
     state.draftDirty = false;
-    $('#activeBar').hidden = true;
-    $('#startBtn').hidden = false;
-    $('#sessionDate').value = new Date().toISOString().slice(0, 10);
+    $('#sessionDate').value = localDate();
     $('#bodyPart').selectedIndex = 0;
     $('#duration').value = '';
     $('#feeling').value = '';
     closeTrainingDecision();
     renderExercises();
+    renderTrainingMode();
     toast('本次未保存训练已丢弃');
   }
 
@@ -365,13 +386,12 @@
       state.timerEndedAt = null;
       state.elapsedBase = 0;
       stopTimer();
-      $('#activeBar').hidden = true;
-      $('#startBtn').hidden = false;
-      $('#sessionDate').value = new Date().toISOString().slice(0, 10);
+      $('#sessionDate').value = localDate();
       $('#duration').value = '';
       $('#feeling').value = '';
       state.exercises = [];
       renderExercises();
+      renderTrainingMode();
       toast('训练已保存到 HealthOS');
       state.offset = 0;
       await loadSessions();
@@ -422,7 +442,7 @@
     renderSessions();
     const root = $('#sessionDetail');
     const groups = groupSessionRecords(session.records);
-    root.innerHTML = `<div class="block-title"><h2>训练详情</h2><span class="sub">HealthOS 本地记录</span></div>
+    root.innerHTML = `<div class="block-title"><h2>训练详情</h2></div>
       <div class="detail-title"><div><h3>${escapeHtml(fmtDate(session.session_date))} · ${escapeHtml(session.body_part)}</h3><p>${escapeHtml(session.feeling || '未填写状态备注')}</p></div><div class="detail-actions"><button class="tiny-btn" id="editSession" type="button">编辑</button><button class="tiny-btn danger" id="deleteSession" type="button">删除</button></div></div>
       <div class="detail-kpis"><div class="detail-kpi"><small>时长</small><strong>${session.duration_minutes ? `${session.duration_minutes} 分钟` : '—'}</strong></div><div class="detail-kpi"><small>训练量</small><strong>${fmtNumber(session.total_volume_kg)} kg</strong></div><div class="detail-kpi"><small>动作组</small><strong>${session.records.length} 组</strong></div></div>
       ${groups.map(group => `<details class="exercise-block" open><summary>${escapeHtml(group.name)}<span>${group.sets.length} 组</span></summary><div class="table-wrap"><table class="records-table"><thead><tr><th>组次</th><th>重量</th><th>次数</th><th>RPE</th><th>组型</th></tr></thead><tbody>${group.sets.map((set, index) => `<tr><td>${index + 1}</td><td>${set.drop ? '递减组' : `${escapeHtml(set.weight)} kg`}</td><td>${set.drop ? (set.segments || []).map(segment => escapeHtml(segment.reps)).join(' → ') : escapeHtml(set.reps)}</td><td>${escapeHtml(set.rpe ?? '')}</td><td>${set.drop ? '递减组' : set.warmup ? '热身组' : '普通组'}</td></tr>`).join('')}</tbody></table></div></details>`).join('') || '<p class="status-note">此训练没有动作记录。</p>'}`;
@@ -442,6 +462,7 @@
     state.timerEndedAt = timing.ended_at || null;
     state.elapsedBase = 0;
     renderExercises();
+    renderTrainingMode();
     $('#saveBtn').textContent = '更新训练';
     changeView('record');
     scheduleDraftSave();
@@ -488,8 +509,7 @@
     const data = state.analytics;
     if (!data) return;
     const summary = data.summary || {};
-    $('#nextHint').textContent = `建议：${data.suggested_body_part || '胸'}`;
-    $('#statsRange').textContent = '根据 HealthOS 本地记录实时计算';
+    $('#statsRange').textContent = '最近 30 天';
     $('#metricTotal').textContent = fmtNumber(summary.total_sessions);
     $('#metricRecent').textContent = `${fmtNumber(summary.recent_sessions)} 次`;
     $('#metricVolume').textContent = `${fmtNumber(summary.recent_volume / 1000, 1)} t`;
@@ -631,12 +651,13 @@
   }
 
   async function initialize() {
-    $('#sessionDate').value = new Date().toISOString().slice(0, 10);
+    $('#sessionDate').value = localDate();
     $('#duration').value = '';
     $('#sidebar').classList.remove('open');
     $$('.side-nav button').forEach(button => button.onclick = () => changeView(button.dataset.view));
     $('#menuBtn').onclick = () => $('#sidebar').classList.toggle('open');
-    $('#bodyPart').onchange = () => { $('#activePart').textContent = $('#bodyPart').value; refreshExerciseHints().catch(showError); scheduleDraftSave(); };
+    $('#entryStartBtn').onclick = () => { startTimer(); renderTrainingMode(); };
+    $('#bodyPart').onchange = () => { $('#activePart').textContent = $('#bodyPart').value; refreshExerciseHints().catch(showError); scheduleDraftSave(); renderTrainingMode(); };
     $('#sessionDate').onchange = scheduleDraftSave;
     $('#feeling').oninput = scheduleDraftSave;
     $('#duration').oninput = scheduleDraftSave;
@@ -707,6 +728,7 @@
     const restored = restoreDraft();
     if (!state.exercises.length) state.exercises = [];
     renderExercises();
+    renderTrainingMode();
     if (state.timerStartedAt) {
       $('#activeBar').hidden = false; $('#startBtn').hidden = true;
       if (state.timerEndedAt) { state.elapsedBase = Math.max(state.elapsedBase, Math.floor((Date.parse(state.timerEndedAt) - Date.parse(state.timerStartedAt)) / 1000)); $('#activeLabel').textContent = '已结束'; $('#endBtn').textContent = '继续计时'; }
