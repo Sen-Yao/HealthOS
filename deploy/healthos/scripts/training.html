@@ -73,8 +73,7 @@
     </main>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <div class="overlay" id="finishOverlay" role="dialog" aria-modal="true" aria-labelledby="finishTitle"><div class="dialog"><p class="eyebrow">FINISH</p><h2 id="finishTitle">结束本次训练</h2><p>计时会暂停。你可以先保存训练，也可以之后再回来完成。</p><div class="dialog-actions"><button class="commit" id="finishSave">结束并保存</button><button class="outline" id="finishLater">结束，稍后保存</button><button class="quiet-btn" id="continueBtn">继续训练</button></div></div></div>
-  <div class="overlay" id="idleOverlay" role="dialog" aria-modal="true" aria-labelledby="idleTitle"><div class="dialog"><p class="eyebrow">IDLE CHECK</p><h2 id="idleTitle">还在训练吗？</h2><p>已经有 10 分钟没有填写新的训练数据。计时仍在继续，请选择下一步。</p><div class="dialog-actions"><button class="commit" id="idleContinue">继续训练</button><button class="outline" id="idleFinish">结束，稍后保存</button><button class="quiet-btn" id="idleDiscard">丢弃本次</button></div></div></div>
+  <div class="overlay" id="trainingDecisionOverlay" role="dialog" aria-modal="true" aria-labelledby="trainingDecisionTitle" aria-describedby="trainingDecisionDescription"><div class="dialog"><p class="eyebrow">TRAINING</p><h2 id="trainingDecisionTitle">结束本次训练</h2><p id="trainingDecisionDescription">计时已暂停。你可以继续训练、保存本次训练，或丢弃本次训练。</p><div class="dialog-actions"><button class="outline" id="decisionContinue">继续训练</button><button class="commit" id="decisionSave">保存训练</button><button class="quiet-btn" id="decisionDiscard">丢弃训练</button></div></div></div>
   <script src="/training-ui.js" defer></script>
 </body>
 </html>

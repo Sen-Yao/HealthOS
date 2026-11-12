@@ -40,6 +40,21 @@ Open `http://127.0.0.1:8792`; verify `/healthz` and `/login` each return `200`.
 
 Last verified: 2026-10-26, Windows local development environment.
 
+## Isolated Browser Use workaround (2026-11-09)
+
+For frontend-only checks without real credentials or business data, run
+`.venv\Scripts\python.exe output/healthos-ui-workaround/server.py` from the project
+root. This local test artifact serves `http://127.0.0.1:18793/training` using
+repository assets and 53 synthetic records, with all business writes disabled.
+Verify `/healthz` from a separate shell. The optional `/training-confirm-fixture`
+route explicitly stubs only the discard confirmation for a disposable draft;
+it does not verify the native browser confirmation flow. No production service
+or authentication configuration is changed. Stop with Ctrl+C.
+
+Results and limitations: `output/healthos-ui-workaround/RESULTS.md`.
+Verified listener and HTTP response on Windows, 2026-11-09. Test artifacts under
+`output/` are local and must be retained separately if sharing this runbook.
+
 ## Docker local smoke run
 
 Prerequisites: Docker Desktop with the WSL 2 engine running. The Dockerfile is

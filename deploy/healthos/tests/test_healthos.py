@@ -1874,7 +1874,17 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn('src="/training-ui.js"', page)
                 self.assertIn('id="exerciseHints"', page)
                 self.assertIn('id="discardBtn"', page)
-                self.assertIn('id="idleOverlay"', page)
+                self.assertIn('id="trainingDecisionOverlay"', page)
+                self.assertIn('id="decisionContinue"', page)
+                self.assertIn('id="decisionSave"', page)
+                self.assertIn('id="decisionDiscard"', page)
+                self.assertIn('>继续训练</button>', page)
+                self.assertIn('>保存训练</button>', page)
+                self.assertIn('>丢弃训练</button>', page)
+                self.assertEqual(page.count('role="dialog"'), 1)
+                self.assertNotIn('id="finishOverlay"', page)
+                self.assertNotIn('id="idleOverlay"', page)
+                self.assertNotIn('结束，稍后保存', page)
                 self.assertNotIn("sessions.unshift", page)
                 script_request = urllib.request.Request(base + "/training-ui.js", headers=cookie)
                 with urllib.request.urlopen(script_request, timeout=2) as response:
@@ -1883,6 +1893,9 @@ class CanonicalStoreTests(unittest.TestCase):
                     self.assertIn("owner/api/training/sessions", script)
                     self.assertIn("new URLSearchParams()", script)
                     self.assertIn("idleReminderSeconds", script)
+                    self.assertIn("openTrainingDecision('idle')", script)
+                    self.assertIn("saveTrainingFromDecision", script)
+                    self.assertIn("continueTrainingFromDecision", script)
                     self.assertIn("csrf_invalid", script)
 
                 def api(path, fields=None, method=None):

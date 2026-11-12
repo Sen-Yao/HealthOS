@@ -310,8 +310,7 @@
     $('#bodyPart').selectedIndex = 0;
     $('#duration').value = '';
     $('#feeling').value = '';
-    $('#finishOverlay').classList.remove('open');
-    $('#idleOverlay').classList.remove('open');
+    closeTrainingDecision();
     renderExercises();
     toast('本次未保存训练已丢弃');
   }
@@ -321,12 +320,43 @@
     resetCurrentTraining();
   }
 
+  function closeTrainingDecision() {
+    $('#trainingDecisionOverlay').classList.remove('open');
+  }
+
+  function openTrainingDecision(source) {
+    const idle = source === 'idle';
+    $('#trainingDecisionTitle').textContent = idle ? '还在训练吗？' : '结束本次训练';
+    $('#trainingDecisionDescription').textContent = idle
+      ? '已经有 10 分钟没有填写新的训练数据。计时仍在继续，请选择下一步。'
+      : '计时已暂停。你可以继续训练、保存本次训练，或丢弃本次训练。';
+    $('#trainingDecisionOverlay').classList.add('open');
+  }
+
+  function continueTrainingFromDecision() {
+    const wasEnded = Boolean(state.timerEndedAt);
+    closeTrainingDecision();
+    if (wasEnded) startTimer();
+    else scheduleDraftSave();
+  }
+
+  async function saveTrainingFromDecision() {
+    if (!state.timerEndedAt && state.timerStartedAt) {
+      finishTimer();
+      scheduleDraftSave();
+    }
+    await saveTraining();
+  }
+
   async function saveTraining() {
     const button = $('#saveBtn');
+    const decisionButtons = ['#decisionContinue', '#decisionSave', '#decisionDiscard'].map(selector => $(selector));
     button.disabled = true;
+    decisionButtons.forEach(decisionButton => { decisionButton.disabled = true; });
     try {
       const result = await request('/training', {method: 'POST', body: trainingFormData()});
       localStorage.removeItem(draftKey);
+      closeTrainingDecision();
       state.draftSavedAt = null;
       state.draftWriteError = null;
       state.draftDirty = false;
@@ -351,7 +381,11 @@
         await loadDetail(result.item.id);
       }
     } catch (error) { toast(error.message); }
-    finally { button.disabled = false; button.textContent = state.editingId ? '更新训练' : '保存训练'; }
+    finally {
+      button.disabled = false;
+      decisionButtons.forEach(decisionButton => { decisionButton.disabled = false; });
+      button.textContent = state.editingId ? '更新训练' : '保存训练';
+    }
   }
 
   function fmtDate(date) { return String(date || '').slice(0, 10); }
@@ -569,7 +603,7 @@
     if (idleSeconds < idleReminderSeconds) return;
     state.idleReminderShown = true;
     writeDraft('idle-reminder');
-    $('#idleOverlay').classList.add('open');
+    openTrainingDecision('idle');
   }
   function startTimer() {
     if (!state.timerStartedAt) state.timerStartedAt = new Date().toISOString();
@@ -635,14 +669,11 @@
     $('#startBtn').onclick = () => startTimer();
     $('#endBtn').onclick = () => {
       if (state.timerEndedAt) { startTimer(); return; }
-      finishTimer(); $('#finishOverlay').classList.add('open'); scheduleDraftSave();
+      finishTimer(); scheduleDraftSave(); openTrainingDecision('manual');
     };
-    $('#continueBtn').onclick = () => { $('#finishOverlay').classList.remove('open'); startTimer(); };
-    $('#finishLater').onclick = () => { $('#finishOverlay').classList.remove('open'); $('#activeLabel').textContent = '已结束 · 可稍后保存'; $('#endBtn').textContent = '继续计时'; scheduleDraftSave(); };
-    $('#finishSave').onclick = saveTraining;
-    $('#idleContinue').onclick = () => { $('#idleOverlay').classList.remove('open'); scheduleDraftSave(); };
-    $('#idleFinish').onclick = () => { $('#idleOverlay').classList.remove('open'); finishTimer(); scheduleDraftSave(); };
-    $('#idleDiscard').onclick = discardCurrentTraining;
+    $('#decisionContinue').onclick = continueTrainingFromDecision;
+    $('#decisionSave').onclick = saveTrainingFromDecision;
+    $('#decisionDiscard').onclick = resetCurrentTraining;
     $('#historyPrevious').onclick = async () => { state.offset = Math.max(0, state.offset - pageSize); await loadSessions(); };
     $('#historyNext').onclick = async () => { if (state.offset + pageSize < state.total) { state.offset += pageSize; await loadSessions(); } };
     $('#historySearch').oninput = () => { clearTimeout(searchHandle); searchHandle = setTimeout(() => { state.query = $('#historySearch').value.trim(); state.offset = 0; loadSessions().catch(showError); }, 220); };
@@ -678,7 +709,7 @@
     renderExercises();
     if (state.timerStartedAt) {
       $('#activeBar').hidden = false; $('#startBtn').hidden = true;
-      if (state.timerEndedAt) { state.elapsedBase = Math.max(state.elapsedBase, Math.floor((Date.parse(state.timerEndedAt) - Date.parse(state.timerStartedAt)) / 1000)); $('#activeLabel').textContent = '已结束 · 可稍后保存'; $('#endBtn').textContent = '继续计时'; }
+      if (state.timerEndedAt) { state.elapsedBase = Math.max(state.elapsedBase, Math.floor((Date.parse(state.timerEndedAt) - Date.parse(state.timerStartedAt)) / 1000)); $('#activeLabel').textContent = '已结束'; $('#endBtn').textContent = '继续计时'; }
       else {
         $('#activeLabel').textContent = '已恢复计时';
         timerHandle = setInterval(renderTimer, 1000);
