@@ -95,7 +95,7 @@ Troubleshooting: if Docker CLI is not on `PATH`, use
 and `docker-credential-desktop.exe` before building. Docker Desktop must be
 running with the WSL 2 engine enabled.
 
-Last verified: 2026-11-12 for the local Python service. Docker smoke build was not rerun because the Docker Desktop Linux engine was unavailable.
+Last verified: 2026-11-12. The local Python service and Docker image both passed `/healthz` and `/login` checks; the Docker smoke container was removed after verification.
 
 ## Ironbook Read-Only Integration Preview
 
