@@ -66,6 +66,36 @@ require a new sign-in. See the deployment README for diagnostic log fields.
 
 Last verified: 2026-11-17, Windows, isolated Chrome and Docker Desktop.
 
+## Release regression checks
+
+Run from the project root with Python 3.12, Node/npx, Chrome, OpenSSL and
+Docker Desktop available. On Windows, the release rollback test also requires
+Git for Windows Bash. The browser harness locates Git's bundled OpenSSL and
+creates disposable TLS certificates and synthetic databases automatically.
+
+```powershell
+python -m unittest discover -s deploy/healthos/tests -p 'test_*.py' -v
+python deploy/healthos/tests/auth_browser_smoke.py
+python deploy/healthos/tests/training_browser_smoke.py
+python deploy/healthos/tests/auth_docker_smoke.py
+```
+
+Version 0.10.0 passed 53 Python tests, 13 authentication browser scenarios,
+18 desktop/mobile training scenarios and all five Docker smoke groups.
+These checks do not use production credentials or production databases.
+Logs, JSON results and screenshots are written below ignored `output/`.
+
+The separate `deploy/healthos/scripts/release_acceptance.py` checks an already
+deployed HTTPS origin with an authorized credential supplied through protected
+stdin. It prints sanitized results and creates/revokes only its own authentication
+session; it does not save health records. Its `expected_js_sha256` must identify
+the UTF-8 JavaScript served over HTTP. Compare the committed Git blob, since
+Python's text response normalizes Windows CRLF working-tree files to LF:
+
+```powershell
+python -c "import hashlib,subprocess; print(hashlib.sha256(subprocess.check_output(['git','show','v0.10.0:deploy/healthos/scripts/training-ui.js'])).hexdigest())"
+```
+
 Purpose: isolated Owner Console development instance. This run uses an empty local SQLite database and does not connect to Ironbook.
 
 Prerequisites: Windows PowerShell and the project `.venv` Python environment.

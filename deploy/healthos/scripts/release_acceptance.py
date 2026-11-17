@@ -2,6 +2,8 @@
 
 The CLI accepts a JSON object on protected stdin with base_url, username,
 password and expected_js_sha256. It prints only sanitized check results.
+expected_js_sha256 is the canonical committed UTF-8/LF blob digest, matching
+the server's text response rather than a CRLF checkout's raw file digest.
 Only its own sign-in/session rows are created/revoked; health records are not written.
 """
 from http.cookies import SimpleCookie
