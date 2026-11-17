@@ -227,7 +227,7 @@ class CanonicalStoreTests(unittest.TestCase):
             )
             server.db_path = str(Path(directory) / "healthos.sqlite3")
             server.raw_dir = Path(directory) / "raw"
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             cookie = {"Cookie": f"healthos_session={session_id}"}
@@ -240,7 +240,7 @@ class CanonicalStoreTests(unittest.TestCase):
                     page = response.read().decode("utf-8")
                 self.assertIn("<option selected>胸</option>", page)
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -913,7 +913,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
             server.ironbook_read_only = True
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -932,7 +932,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     healthos.fetch_ironbook_exercise_suggestions("http://ironbook.test", 1, "x", "invalid")
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -986,7 +986,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
             server.ironbook_read_only = True
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             url = f"http://127.0.0.1:{server.server_port}/owner/api/training/exercises/last?name=bench"
@@ -1000,7 +1000,7 @@ class CanonicalStoreTests(unittest.TestCase):
                         self.assertEqual(json.loads(response.read()), {"exercise": "bench", **result})
                 self.assertEqual(fetch.call_args.args[2], "bench")
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1014,7 +1014,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.raw_dir = Path(directory) / "raw"
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
-            session_cookie, csrf = healthos.create_session()
+            session_cookie, csrf = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             records = [{"name": "卧推", "weight_kg": 60, "reps": [8], "rpe": [8]}]
@@ -1078,7 +1078,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 conn.close()
             finally:
                 connection.close()
-                healthos.destroy_session(session_cookie)
+                healthos.destroy_session(session_cookie, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1319,7 +1319,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.raw_dir = Path(directory) / "raw"
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             summary = [{
@@ -1412,7 +1412,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0], 0)
                 conn.close()
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1426,7 +1426,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.raw_dir = Path(directory) / "raw"
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             sessions = [{
@@ -1466,7 +1466,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn("显示第 51–67 条，共 67 条", second_page)
                 self.assertIn("offset=0", second_page)
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1480,7 +1480,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.raw_dir = Path(directory) / "raw"
             server.ironbook_base_url = "http://ironbook.test"
             server.ironbook_timeout_seconds = 1
-            session_id, _ = healthos.create_session()
+            session_id, _ = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             summaries = [{"id": 71, "session_date": "2026-10-25", "body_part": "背"}]
@@ -1523,7 +1523,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0], 0)
                 conn.close()
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1539,7 +1539,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.ironbook_timeout_seconds = 1
             server.ironbook_read_only = False
             server.ironbook_migration_enabled = True
-            session_id, csrf = healthos.create_session()
+            session_id, csrf = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             snapshot = [{
@@ -1595,7 +1595,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM training_exercise_records").fetchone()[0], 1)
                 conn.close()
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1611,7 +1611,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server.ironbook_timeout_seconds = 1
             server.ironbook_read_only = True
             server.ironbook_migration_enabled = True
-            session_id, csrf = healthos.create_session()
+            session_id, csrf = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             source = [{
@@ -1656,7 +1656,7 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM training_sessions").fetchone()[0], 0)
                 conn.close()
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
@@ -1694,7 +1694,8 @@ class CanonicalStoreTests(unittest.TestCase):
                 connection.request("POST", "/login", body, {"Content-Type": "application/x-www-form-urlencoded"})
                 response = connection.getresponse()
                 self.assertEqual(response.status, 303)
-                cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+                cookie = next(value for value in response.headers.get_all("Set-Cookie")
+                              if value.startswith(healthos.SESSION_COOKIE + "=")).split(";", 1)[0]
                 response.read()
 
                 connection.request("GET", "/", headers={"Cookie": cookie})
@@ -1839,7 +1840,7 @@ class CanonicalStoreTests(unittest.TestCase):
             server = healthos.http.server.ThreadingHTTPServer(("127.0.0.1", 0), healthos.HealthOSHandler)
             server.db_path = str(db_path)
             server.raw_dir = Path(directory) / "raw"
-            session_id, csrf = healthos.create_session()
+            session_id, csrf = healthos.create_session(server.db_path)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             base = f"http://127.0.0.1:{server.server_port}"
@@ -1853,9 +1854,13 @@ class CanonicalStoreTests(unittest.TestCase):
                 with urllib.request.urlopen(request, timeout=2) as response:
                     page = response.read().decode("utf-8")
                     self.assertEqual(response.headers.get_content_type(), "text/html")
+                script_request = urllib.request.Request(base + "/training-ui.js", headers=cookie)
+                with urllib.request.urlopen(script_request, timeout=2) as response:
+                    training_script = response.read().decode("utf-8")
                 self.assertIn('name="healthos-csrf"', page)
                 self.assertIn('src="/training-ui.js"', page)
-                self.assertIn('id="exerciseHints"', page)
+                self.assertIn('id="authOverlay"', page)
+                self.assertIn('id="savedDrafts"', page)
                 self.assertIn('id="discardBtn"', page)
                 self.assertIn('id="trainingEntry"', page)
                 self.assertIn('id="activeTraining"', page)
@@ -1872,7 +1877,9 @@ class CanonicalStoreTests(unittest.TestCase):
                 self.assertIn('>继续训练</button>', page)
                 self.assertIn('>保存训练</button>', page)
                 self.assertIn('>丢弃训练</button>', page)
-                self.assertEqual(page.count('role="dialog"'), 1)
+                self.assertEqual(page.count('role="dialog"'), 2)
+                self.assertIn('role="combobox"', training_script)
+                self.assertIn("aria-activedescendant", training_script)
                 self.assertNotIn('id="finishOverlay"', page)
                 self.assertNotIn('id="idleOverlay"', page)
                 self.assertNotIn('结束，稍后保存', page)
@@ -1951,7 +1958,7 @@ class CanonicalStoreTests(unittest.TestCase):
                     api("/training", {**create_fields, "csrf": "invalid"}, "POST")
                 self.assertEqual(invalid_csrf.exception.code, 403)
             finally:
-                healthos.destroy_session(session_id)
+                healthos.destroy_session(session_id, server.db_path)
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)

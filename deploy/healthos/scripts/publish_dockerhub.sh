@@ -12,11 +12,18 @@ if [ -z "$VERSION" ]; then
   exit 2
 fi
 
-docker build \
+REVISION=$(git -C "$CONTEXT" rev-parse HEAD)
+if [ -n "$(git -C "$CONTEXT" status --porcelain)" ]; then
+  echo "Release builds require a clean committed worktree." >&2
+  exit 2
+fi
+
+docker buildx build \
   --file "$DOCKERFILE" \
+  --build-arg "HEALTHOS_VERSION=${VERSION}" \
+  --build-arg "HEALTHOS_REVISION=${REVISION}" \
   --tag "${IMAGE_REPOSITORY}:${VERSION}" \
   --tag "${IMAGE_REPOSITORY}:latest" \
+  --push \
   "$CONTEXT"
-docker push "${IMAGE_REPOSITORY}:${VERSION}"
-docker push "${IMAGE_REPOSITORY}:latest"
 echo "Published ${IMAGE_REPOSITORY}:${VERSION} and ${IMAGE_REPOSITORY}:latest"

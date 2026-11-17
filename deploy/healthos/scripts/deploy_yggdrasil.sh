@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 # Production deployment keeps exactly one HealthOS container on the host.
 # The registry is the source of release history; old containers are not kept.
@@ -71,13 +72,28 @@ run_healthos() {
 }
 
 rollback() {
-  if [ -z "$previous_image" ]; then
+  if [ -z "$previous_image_id" ]; then
     echo "HealthOS rollout failed; no previous image is available for rollback." >&2
     return 0
   fi
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-  run_healthos "$previous_image"
-  echo "HealthOS rollout failed; recreated $CONTAINER_NAME from $previous_image" >&2
+  if [ -f "$source_env_file" ]; then
+    cp "$source_env_file" "$env_file"
+  fi
+  # Pulling latest can change its target; the captured image ID cannot move.
+  if ! run_healthos "$previous_image_id"; then
+    echo "HealthOS rollback could not recreate $CONTAINER_NAME." >&2
+    return 1
+  fi
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/healthz" > "$health_file"; then
+      echo "HealthOS rollout failed; restored $CONTAINER_NAME from $previous_image_id" >&2
+      return 0
+    fi
+    sleep 2
+  done
+  echo "HealthOS rollback container did not become healthy." >&2
+  return 1
 }
 
 # Remove historical backup containers left by the former deployment flow.

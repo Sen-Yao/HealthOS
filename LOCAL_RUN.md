@@ -1,5 +1,71 @@
 # Local HealthOS Run
 
+## Training entry regression checks (2026-11-17)
+
+Run the complete training interaction check from the project root:
+
+```powershell
+.venv\Scripts\python.exe deploy/healthos/tests/training_browser_smoke.py
+```
+
+It reuses the isolated HTTPS/Chrome harness below with a synthetic exercise
+catalog and alias. Desktop and 390px mobile scenarios run as separate batches;
+the mobile scenarios exercise touch taps as well as viewport layout. Tests cover
+group menus/deletion/undo, last-group removal, weight inheritance, canonical and
+alias suggestion filtering (including late responses), local validation, matching
+footer/dialog feedback, HTTP/authentication/network failures, invalid save
+acknowledgements, idempotent retries, retained edits after uncertain submissions,
+and warnings after acknowledged saves. No production data or service is used.
+
+Results, sanitized server logs, and desktop/mobile screenshots are written to
+`output/playwright/training-update/`. Browser profiles, certificates, databases
+and the ephemeral listener are disposed automatically. Run the authentication
+check and full Python suite below to verify their existing behavior as well.
+
+## Authentication regression checks (2026-11-17)
+
+These checks use synthetic accounts and disposable databases. They do not connect
+to production or Ironbook, publish images, or modify existing local services.
+Run from the project root in PowerShell:
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover -s deploy/healthos/tests -p "test_*.py" -v
+.venv\Scripts\python.exe deploy/healthos/tests/auth_browser_smoke.py
+.venv\Scripts\python.exe deploy/healthos/tests/auth_docker_smoke.py
+```
+
+The browser check requires Node/npx, installed Google Chrome, and OpenSSL. On
+Windows it also discovers the OpenSSL executable included with Git for Windows.
+It resolves Playwright CLI through npx, then invokes Node directly to avoid the
+Windows cmd.exe command-length limit. No project npm dependency is installed.
+The check serves HTTPS on an ephemeral 127.0.0.1 port with a temporary certificate,
+probes `/healthz` from a separate process, and opens an isolated Chrome profile.
+The localhost source represents another site and permits a cross-site test form;
+this fixture policy is never included in production. Browser and listener close
+automatically, including on assertion failures.
+
+Browser results and structured server logs are saved under
+`output/playwright/auth-update/`. Expected: every reported scenario passes,
+including Lax navigation, old Strict-cookie recovery, response-order races,
+cross-tab sign-in, draft retention, CSRF preservation and rejected cross-site POST.
+
+The Docker check requires the existing Docker Desktop engine. It discovers the
+CLI under PATH or the local Docker Desktop installation, supplies a synthetic API
+token required by the normal serve entrypoint, builds a uniquely tagged image,
+and runs a uniquely named container bound only to an ephemeral localhost port.
+It verifies sign-in, v2 attributes, CSRF rejection, logout, and session persistence
+after container recreation using the same disposable mounted database. It removes
+its container and image tag on completion; it does not prune other images.
+Results are saved under `output/auth-update-20261117/`.
+
+The server retains seven-day idle and thirty-day absolute expiry. New cookies
+use `healthos_session_v2`, SameSite=Lax, and a fixed browser deadline; only legacy
+cookies receive response-based renewal. Existing sessions need not reauthenticate
+on upgrade. Older release images do not understand v2 cookies, so rollback may
+require a new sign-in. See the deployment README for diagnostic log fields.
+
+Last verified: 2026-11-17, Windows, isolated Chrome and Docker Desktop.
+
 Purpose: isolated Owner Console development instance. This run uses an empty local SQLite database and does not connect to Ironbook.
 
 Prerequisites: Windows PowerShell and the project `.venv` Python environment.

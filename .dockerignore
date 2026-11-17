@@ -1,6 +1,8 @@
 .git/
 .local-dev/
 .playwright-cli/
+output/
+.pytest_cache/
 .venv/
 __pycache__/
 *.py[cod]

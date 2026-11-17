@@ -21,7 +21,6 @@ from pathlib import Path
 import secrets
 import sqlite3
 import sys
-import threading
 import time
 import urllib.parse
 import urllib.error
@@ -35,11 +34,69 @@ import xml.etree.ElementTree as ET
 SCHEMA_VERSION = "0.4.0"
 DEFAULT_DB = "private/healthos/healthos.sqlite3"
 DEFAULT_RAW = "private/healthos/raw"
-SESSION_TTL_SECONDS = 30 * 60
-SESSION_COOKIE = "healthos_session"
+OWNER_USERNAME = "Senyao"
+SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+SESSION_MAX_SECONDS = 30 * 24 * 60 * 60
+SESSION_COOKIE = "healthos_session_v2"
+LEGACY_SESSION_COOKIE = "healthos_session"
 
-_SESSIONS: dict[str, dict[str, object]] = {}
-_SESSIONS_LOCK = threading.Lock()
+LOGIN_PAGE_SCRIPT = r"""<script>
+(() => {
+  const form = document.querySelector('form[action="/login"]');
+  if (!form) return;
+  const button = form.querySelector('button[type="submit"]');
+  let submitted = false, pending = null, controller = null, epoch = 0;
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (submitted) return;
+    submitted = true;
+    epoch += 1;
+    controller?.abort();
+    button.disabled = true;
+    try {
+      const response = await fetch('/login', {method: 'POST', credentials: 'same-origin',
+        headers: {Accept: 'application/json'}, body: new URLSearchParams(new FormData(form))});
+      const result = await response.json();
+      if (!response.ok || typeof result.csrf !== 'string' || !result.csrf) {
+        throw new Error(result.detail || '登录失败，请重试。');
+      }
+      try {
+        if (typeof BroadcastChannel === 'function') {
+          const channel = new BroadcastChannel('healthos.owner.auth');
+          channel.postMessage('signed-in'); channel.close();
+        } else localStorage.setItem('healthos.owner.auth.updated', String(Date.now()) + Math.random());
+      } catch (_) {}
+      location.replace('/');
+    } catch (error) {
+      let message = form.querySelector('[role="alert"]');
+      if (!message) { message = document.createElement('p'); message.setAttribute('role', 'alert'); form.append(message); }
+      message.textContent = error.message || '登录失败，请重试。';
+      submitted = false; button.disabled = false;
+    }
+  });
+  function check() {
+    if (submitted || pending) return;
+    const started = epoch;
+    controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    pending = fetch('/owner/api/session', {
+      credentials: 'same-origin', cache: 'no-store',
+      headers: {Accept: 'application/json'}, signal: controller.signal,
+    }).then(async response => {
+      if (response.status !== 200) return;
+      const session = await response.json();
+      if (!submitted && started === epoch && typeof session.csrf === 'string' && session.csrf) {
+        location.replace('/');
+      }
+    }).catch(() => {}).finally(() => { clearTimeout(timeout); pending = null; });
+  }
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) { submitted = false; button.disabled = false; epoch += 1; }
+    check();
+  });
+  check();
+})();
+</script>"""
 
 TRAINING_PAGE_SCRIPT = r"""<script>
 const form = document.getElementById('training-form');
@@ -347,35 +404,81 @@ def owner_password_hash() -> str | None:
     return configured or None
 
 
-def create_session() -> tuple[str, str]:
+def owner_credential_version() -> str:
+    return hashlib.sha256((owner_password_hash() or "").encode("utf-8")).hexdigest()
+
+
+def create_session(db_path: str | Path, *, replace_tokens: tuple[str, ...] = ()) -> tuple[str, str]:
     session_id = secrets.token_urlsafe(32)
     csrf_token = secrets.token_urlsafe(32)
-    with _SESSIONS_LOCK:
-        _SESSIONS[session_id] = {
-            "csrf": csrf_token,
-            "expires_at": time.time() + SESSION_TTL_SECONDS,
-        }
+    now = time.time()
+    conn = init_db(db_path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM owner_sessions WHERE expires_at<=? OR absolute_expires_at<=?", (now, now))
+            conn.execute(
+                "INSERT INTO owner_sessions(token_hash,csrf,created_at,expires_at,absolute_expires_at,credential_version,username) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (sha256_text(session_id), csrf_token, now, now + SESSION_TTL_SECONDS,
+                 now + SESSION_MAX_SECONDS, owner_credential_version(), OWNER_USERNAME),
+            )
+            conn.executemany("DELETE FROM owner_sessions WHERE token_hash=?",
+                             ((sha256_text(token),) for token in set(replace_tokens)))
+    finally:
+        conn.close()
     return session_id, csrf_token
 
 
-def session_data(session_id: str | None) -> dict[str, object] | None:
+def session_data(session_id: str | None, db_path: str | Path) -> dict[str, object] | None:
+    return _session_lookup(session_id, db_path)[0]
+
+
+def _session_lookup(session_id: str | None, db_path: str | Path) -> tuple[dict[str, object] | None, str]:
     if not session_id:
-        return None
-    with _SESSIONS_LOCK:
-        session = _SESSIONS.get(session_id)
-        if not session:
-            return None
-        if float(session["expires_at"]) <= time.time():
-            _SESSIONS.pop(session_id, None)
-            return None
-        session["expires_at"] = time.time() + SESSION_TTL_SECONDS
-        return dict(session)
+        return None, "missing_cookie"
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        return None, "malformed_cookie"
+    if not Path(db_path).is_file():
+        return None, "unknown_session"
+    now = time.time()
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            row = conn.execute(
+                "UPDATE owner_sessions SET expires_at=MIN(?,absolute_expires_at) "
+                "WHERE token_hash=? AND expires_at>? AND absolute_expires_at>? AND credential_version=? "
+                "RETURNING csrf,created_at,expires_at,absolute_expires_at,username",
+                (now + SESSION_TTL_SECONDS, sha256_text(session_id), now, now, owner_credential_version()),
+            ).fetchone()
+            if row is None:
+                prior = conn.execute(
+                    "SELECT expires_at,absolute_expires_at,credential_version FROM owner_sessions WHERE token_hash=?",
+                    (sha256_text(session_id),),
+                ).fetchone()
+                reason = "unknown_session"
+                if prior is not None:
+                    if prior["absolute_expires_at"] <= now:
+                        reason = "absolute_expired"
+                    elif prior["expires_at"] <= now:
+                        reason = "idle_expired"
+                    elif prior["credential_version"] != owner_credential_version():
+                        reason = "credential_changed"
+                conn.execute("DELETE FROM owner_sessions WHERE token_hash=?", (sha256_text(session_id),))
+                return None, reason
+            return {"username": OWNER_USERNAME, **dict(row)}, "authenticated"
+    finally:
+        conn.close()
 
 
-def destroy_session(session_id: str | None) -> None:
+def destroy_session(session_id: str | None, db_path: str | Path) -> None:
     if session_id:
-        with _SESSIONS_LOCK:
-            _SESSIONS.pop(session_id, None)
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            with conn:
+                conn.execute("DELETE FROM owner_sessions WHERE token_hash=?", (sha256_text(session_id),))
+        finally:
+            conn.close()
 
 
 def apply_migrations(conn: sqlite3.Connection) -> None:
@@ -634,6 +737,24 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
             "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
             ("0.5.0-observation-count", utc_now()),
         )
+    if "0.6.0-owner-sessions" not in applied:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS owner_sessions (
+                token_hash TEXT PRIMARY KEY,
+                csrf TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                absolute_expires_at REAL NOT NULL,
+                credential_version TEXT NOT NULL,
+                username TEXT NOT NULL DEFAULT 'Senyao'
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_owner_sessions_expiry ON owner_sessions(expires_at)")
+        conn.execute("INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)",
+                     ("0.6.0-owner-sessions", utc_now()))
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(owner_sessions)")}
+    if "username" not in columns:
+        conn.execute("ALTER TABLE owner_sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'Senyao'")
 
 
 def refresh_observation_count(conn: sqlite3.Connection) -> None:
@@ -3290,12 +3411,54 @@ def training_link_payload(
 class HealthOSHandler(http.server.BaseHTTPRequestHandler):
     server_version = f"HealthOS/{SCHEMA_VERSION}"
 
+    def handle_one_request(self) -> None:
+        self._owner_session_checked = False
+        self._owner_session_cache: dict[str, object] | None = None
+        self._response_cookies: list[str] = []
+        self._request_id = secrets.token_hex(8)
+        self._response_status: int | None = None
+        self._auth_reason = "not_checked"
+        self._cookie_action = "none"
+        self._started_at = time.monotonic()
+        try:
+            super().handle_one_request()
+        except sqlite3.Error:
+            self._auth_reason = "storage_error"
+            self.log_message("")
+            raise
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._response_status = code
+        super().send_response(code, message)
+
+    def end_headers(self) -> None:
+        for cookie in self._response_cookies:
+            self.send_header("Set-Cookie", cookie)
+        self._response_cookies = []
+        super().end_headers()
+
     def log_message(self, fmt: str, *args: object) -> None:
-        # Never log request bodies or Authorization headers.
-        path = self.path.split("?", 1)[0]
+        # Do not interpolate BaseHTTPRequestHandler's raw request line or errors.
+        path = getattr(self, "path", "").split("?", 1)[0]
         if path.startswith("/share/"):
             path = "/share/<REDACTED>"
-        sys.stderr.write(f"{self.address_string()} {self.command} {path} {fmt % args}\n")
+        headers = getattr(self, "headers", {})
+        current = self.request_cookie(SESSION_COOKIE)
+        legacy = self.request_cookie(LEGACY_SESSION_COOKIE)
+        record = {
+            "timestamp": utc_now(), "request_id": self._request_id,
+            "event": "authentication" if self._auth_reason != "not_checked" else "http_request",
+            "method": getattr(self, "command", ""), "route": path[:256],
+            "status": self._response_status, "auth_reason": self._auth_reason,
+            "cookie_present": current is not None or legacy is not None,
+            "cookie_kind": "v2" if current is not None else "legacy" if legacy is not None else "none",
+            "cookie_action": self._cookie_action,
+            "host": headers.get("Host", "")[:255],
+            "sec_fetch_site": headers.get("Sec-Fetch-Site", "")[:32],
+            "user_agent": headers.get("User-Agent", "")[:256],
+            "duration_ms": round((time.monotonic() - self._started_at) * 1000, 2),
+        }
+        sys.stderr.write(json.dumps(record, ensure_ascii=True) + "\n")
 
     def authorized(self) -> bool:
         expected = os.environ.get("HEALTHOS_API_TOKEN")
@@ -3356,32 +3519,54 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(303)
         self.send_header("Location", location)
         if cookie:
-            self.send_header("Set-Cookie", cookie)
+            self._response_cookies = [cookie]
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def cookie_secure(self) -> bool:
         return os.environ.get("HEALTHOS_COOKIE_SECURE", "0").lower() in {"1", "true", "yes"}
 
-    def session_cookie(self, session_id: str, *, max_age: int = SESSION_TTL_SECONDS) -> str:
+    def session_cookie(self, session_id: str, *, max_age: int = SESSION_MAX_SECONDS,
+                       name: str = SESSION_COOKIE) -> str:
         secure = "; Secure" if self.cookie_secure() else ""
-        return f"{SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+        return f"{name}={session_id}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
 
     def request_cookie(self, name: str) -> str | None:
-        raw = self.headers.get("Cookie", "")
+        raw = getattr(self, "headers", {}).get("Cookie", "")
         for item in raw.split(";"):
             key, separator, value = item.strip().partition("=")
             if separator and key == name:
                 return value
         return None
 
+    def request_session_tokens(self) -> tuple[str, ...]:
+        return tuple(token for name in (SESSION_COOKIE, LEGACY_SESSION_COOKIE)
+                     if (token := self.request_cookie(name)))
+
+    def clear_session_cookies(self) -> None:
+        self._response_cookies = [self.session_cookie("", max_age=0, name=name)
+                                  for name in (LEGACY_SESSION_COOKIE, SESSION_COOKIE)]
+
     def owner_session(self) -> dict[str, object] | None:
-        return session_data(self.request_cookie(SESSION_COOKIE))
+        if not self._owner_session_checked:
+            self._owner_session_checked = True
+            current = self.request_cookie(SESSION_COOKIE)
+            session_id = current if current is not None else self.request_cookie(LEGACY_SESSION_COOKIE)
+            self._owner_session_cache, self._auth_reason = _session_lookup(session_id, self.server.db_path)  # type: ignore[attr-defined]
+            if self._owner_session_cache is not None and session_id and current is None:
+                remaining = int(float(self._owner_session_cache["expires_at"]) - time.time())
+                self._response_cookies = [self.session_cookie(session_id, max_age=max(0, remaining),
+                                                              name=LEGACY_SESSION_COOKIE)]
+                self._cookie_action = "renew_legacy"
+        return self._owner_session_cache
 
     def require_owner(self) -> dict[str, object] | None:
         session = self.owner_session()
         if session is None:
-            self.redirect("/login")
+            if self.wants_json():
+                self.send_json(401, {"error": "owner_auth_required"})
+            else:
+                self.redirect("/login")
         return session
 
     def page(self, title: str, content: str, *, session: dict[str, object] | None = None) -> str:
@@ -3913,10 +4098,19 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
             content = """<div class='panel'><p class='eyebrow'>个人健康档案</p>
             <p class='muted'>登录以查看和管理你的健康数据。</p>
             <form method='post' action='/login' autocomplete='on'>
+            <label for='owner-username'>用户名</label>
+            <input id='owner-username' type='text' name='username' value='Senyao' required autocomplete='username' autocapitalize='none' spellcheck='false'>
             <label for='owner-password'>管理员密码</label>
             <input id='owner-password' type='password' name='password' required autofocus autocomplete='current-password'>
             <button type='submit'>登录 HealthOS</button></form></div>"""
-            self.send_html(200, self.page("管理员登录", content))
+            self.send_html(200, self.page("管理员登录", content + LOGIN_PAGE_SCRIPT))
+            return
+        if parsed.path == "/owner/api/session":
+            session = self.owner_session()
+            if session is None:
+                self.send_json(401, {"error": "owner_auth_required"})
+            else:
+                self.send_json(200, session)
             return
         if parsed.path.startswith("/share/"):
             token = urllib.parse.unquote(parsed.path[len("/share/"):])
@@ -4300,17 +4494,40 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                     raise ValueError("body_too_large")
                 form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
                 password = form.get("password", [""])[0]
+                username = form.get("username", [OWNER_USERNAME])[0]
             except (ValueError, UnicodeDecodeError) as exc:
+                self._auth_reason = "invalid_login_request"
+                if self.wants_json():
+                    self.send_json(400, {"error": "invalid_login_request"})
+                    return
                 self.send_html(400, self.page("管理员登录", f"<div class='panel error'>{html.escape(str(exc))}</div>"))
                 return
             if not owner_password_hash():
+                self._auth_reason = "owner_auth_not_configured"
+                if self.wants_json():
+                    self.send_json(503, {"error": "owner_auth_not_configured"})
+                    return
                 self.send_html(503, self.page("管理员登录", "<div class='panel error'>尚未配置管理员身份验证。</div>"))
                 return
-            if not verify_password(password, owner_password_hash()):
+            password_valid = verify_password(password, owner_password_hash())
+            if username != OWNER_USERNAME or not password_valid:
+                self._auth_reason = "invalid_credentials"
+                if self.wants_json():
+                    self.send_json(401, {"error": "invalid_credentials", "detail": "用户名或密码不正确，请重试。"})
+                    return
                 self.send_html(401, self.page("管理员登录", "<div class='panel error'>密码不正确，请重试。</div>"))
                 return
-            session_id, _ = create_session()
-            self.redirect("/", cookie=self.session_cookie(session_id))
+            session_id, _ = create_session(self.server.db_path, replace_tokens=self.request_session_tokens())  # type: ignore[attr-defined]
+            session = session_data(session_id, self.server.db_path)  # type: ignore[attr-defined]
+            remaining = max(0, int(float(session["absolute_expires_at"]) - time.time()))
+            self._auth_reason = "login_success"
+            self._cookie_action = "issue_v2"
+            self._response_cookies = [self.session_cookie("", max_age=0, name=LEGACY_SESSION_COOKIE),
+                                      self.session_cookie(session_id, max_age=remaining)]
+            if self.wants_json():
+                self.send_json(200, session)
+                return
+            self.redirect("/")
             return
         if parsed_path in {"/logout", "/training", "/training/aliases", "/training/delete", "/training/migration", "/add", "/shares", "/shares/copy", "/shares/revoke"}:
             session_id = self.request_cookie(SESSION_COOKIE)
@@ -4327,6 +4544,7 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                 return
             supplied_csrf = form.get("csrf", [""])[0]
             if not hmac.compare_digest(supplied_csrf, str(session.get("csrf", ""))):
+                self._auth_reason = "csrf_invalid"
                 if self.wants_json():
                     self.send_json(403, {"error": "csrf_invalid"})
                     return
@@ -4340,8 +4558,17 @@ class HealthOSHandler(http.server.BaseHTTPRequestHandler):
                 self.send_html(403, self.page("力量训练", "<div class='panel error'>Ironbook 当前处于只读预览，训练记录未修改。</div>", session=session))
                 return
             if parsed_path == "/logout":
-                destroy_session(session_id)
-                self.redirect("/login", cookie=self.session_cookie("", max_age=0))
+                conn = sqlite3.connect(self.server.db_path, timeout=10)  # type: ignore[attr-defined]
+                try:
+                    with conn:
+                        conn.executemany("DELETE FROM owner_sessions WHERE token_hash=?",
+                                         ((sha256_text(token),) for token in set(self.request_session_tokens())))
+                finally:
+                    conn.close()
+                self.clear_session_cookies()
+                self._auth_reason = "logout_success"
+                self._cookie_action = "clear"
+                self.redirect("/login")
                 return
             if parsed_path == "/training":
                 if form.get("training_source", [""])[0] == "ironbook":
